@@ -28,6 +28,8 @@
     NSString* origin;
     
     NSArray* runLoopModes;
+    
+    NSMutableArray* queuedMessages;
 }
 
 @property(nonatomic,assign) id<ZTWebSocketDelegate> delegate;

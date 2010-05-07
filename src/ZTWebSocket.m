@@ -37,7 +37,7 @@ enum {
             [NSException raise:ZTWebSocketException format:@"Unsupported protocol %@",url.scheme];
         }
         socket = [[AsyncSocket alloc] initWithDelegate:self];
-        self.runLoopModes = [NSArray arrayWithObjects:NSRunLoopCommonModes, nil]; 
+        self.runLoopModes = [NSArray arrayWithObjects:NSRunLoopCommonModes, nil];
     }
     return self;
 }
@@ -80,6 +80,49 @@ enum {
     [socket readDataToData:[NSData dataWithBytes:"\xFF" length:1] withTimeout:-1 tag:ZTWebSocketTagMessage];
 }
 
+-(void)_sendWebSocketHandshake {
+    NSString* requestOrigin = self.origin;
+    if (!requestOrigin) requestOrigin = [NSString stringWithFormat:@"http://%@",url.host];
+    
+    NSString *requestPath = url.path;
+    
+    // If the url is something like 'ws://localhost', the requestPath should be '/'. 
+    if ([requestPath isEqualToString:@""]) {
+        requestPath = @"/";
+    }
+	
+    if (url.query) {
+        requestPath = [requestPath stringByAppendingFormat:@"?%@", url.query];
+    }
+    NSString* getRequest = [NSString stringWithFormat:@"GET %@ HTTP/1.1\r\n"
+                            "Upgrade: WebSocket\r\n"
+                            "Connection: Upgrade\r\n"
+                            "Host: %@\r\n"
+                            "Origin: %@\r\n"
+                            "\r\n",
+                            requestPath,url.host,requestOrigin];
+    [socket writeData:[getRequest dataUsingEncoding:NSASCIIStringEncoding] withTimeout:-1 tag:ZTWebSocketTagHandshake];
+}
+
+-(void)_sendNow:(NSString*)message {
+    NSMutableData* data = [NSMutableData data];
+    [data appendBytes:"\x00" length:1];
+    [data appendData:[message dataUsingEncoding:NSUTF8StringEncoding]];
+    [data appendBytes:"\xFF" length:1];
+    [socket writeData:data withTimeout:-1 tag:ZTWebSocketTagMessage];    
+}
+
+-(void)_flushSendQueue {
+    if (queuedMessages != nil) {
+        for (NSString *message in queuedMessages) {
+            [self _sendNow:message];
+        }
+        
+        [queuedMessages release];
+        queuedMessages = nil;
+    }
+}
+
 #pragma mark Public interface
 
 -(void)close {
@@ -90,15 +133,28 @@ enum {
     if (!connected) {
         [socket connectToHost:url.host onPort:[url.port intValue] withTimeout:5 error:nil];
         if (runLoopModes) [socket setRunLoopModes:runLoopModes];
+        
+        // This will be queued up and sent by asyncsocket as soon as the TCP connection is
+        // established. 
+        [self _sendWebSocketHandshake];
     }
 }
 
 -(void)send:(NSString*)message {
-    NSMutableData* data = [NSMutableData data];
-    [data appendBytes:"\x00" length:1];
-    [data appendData:[message dataUsingEncoding:NSUTF8StringEncoding]];
-    [data appendBytes:"\xFF" length:1];
-    [socket writeData:data withTimeout:-1 tag:ZTWebSocketTagMessage];
+    if (connected) {
+        [self _sendNow:message];
+    } else {
+        // Because of asyncsocket's send queue, we could just pass the messages to asyncsocket
+        // immediately even if we haven't connected yet. However, encryption will add some overhead
+        // which will invalidate that method.
+        if (queuedMessages == nil)  {
+            queuedMessages = [[NSMutableArray alloc] init];
+        }
+        
+        NSString *messageCopy = [message copy];
+        [queuedMessages addObject:messageCopy];
+        [messageCopy release];
+    }
 }
 
 #pragma mark AsyncSocket delegate methods
@@ -116,27 +172,7 @@ enum {
 }
 
 - (void)onSocket:(AsyncSocket *)sock didConnectToHost:(NSString *)host port:(UInt16)port {
-    NSString* requestOrigin = self.origin;
-    if (!requestOrigin) requestOrigin = [NSString stringWithFormat:@"http://%@",url.host];
-        
-    NSString *requestPath = url.path;
-    
-    // If the url is something like 'ws://localhost', the requestPath should be '/'. 
-    if ([requestPath isEqualToString:@""]) {
-        requestPath = @"/";
-    }
-	
-    if (url.query) {
-      requestPath = [requestPath stringByAppendingFormat:@"?%@", url.query];
-    }
-    NSString* getRequest = [NSString stringWithFormat:@"GET %@ HTTP/1.1\r\n"
-                                                       "Upgrade: WebSocket\r\n"
-                                                       "Connection: Upgrade\r\n"
-                                                       "Host: %@\r\n"
-                                                       "Origin: %@\r\n"
-                                                       "\r\n",
-                                                        requestPath,url.host,requestOrigin];
-    [socket writeData:[getRequest dataUsingEncoding:NSASCIIStringEncoding] withTimeout:-1 tag:ZTWebSocketTagHandshake];
+
 }
 
 -(void)onSocket:(AsyncSocket *)sock didWriteDataWithTag:(long)tag {
@@ -154,6 +190,7 @@ enum {
             connected = YES;
             [self _dispatchOpened];
             
+            [self _flushSendQueue];
             [self _readNextMessage];
         } else {
             [self _dispatchFailure:[NSNumber numberWithInt:ZTWebSocketErrorHandshakeFailed]];
@@ -177,6 +214,7 @@ enum {
     [socket release];
     [runLoopModes release];
     [url release];
+    [queuedMessages release];
     [super dealloc];
 }
 
