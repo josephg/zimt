@@ -120,6 +120,12 @@ enum {
     if (!requestOrigin) requestOrigin = [NSString stringWithFormat:@"http://%@",url.host];
         
     NSString *requestPath = url.path;
+    
+    // If the url is something like 'ws://localhost', the requestPath should be '/'. 
+    if ([requestPath isEqualToString:@""]) {
+        requestPath = @"/";
+    }
+	
     if (url.query) {
       requestPath = [requestPath stringByAppendingFormat:@"?%@", url.query];
     }
