@@ -126,7 +126,9 @@ enum {
 #pragma mark Public interface
 
 -(void)close {
-    [socket disconnectAfterReadingAndWriting];
+    // ZTWebSocket keeps a read operation pending, so disconnectAfterReading won't close the socket
+    // until another packet is received.
+    [socket disconnectAfterWriting];
 }
 
 -(void)open {
@@ -161,6 +163,7 @@ enum {
 
 -(void)onSocketDidDisconnect:(AsyncSocket *)sock {
     connected = NO;
+    [self _dispatchClosed];
 }
 
 -(void)onSocket:(AsyncSocket *)sock willDisconnectWithError:(NSError *)err {
