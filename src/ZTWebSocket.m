@@ -133,7 +133,9 @@ enum {
 
 -(void)open {
     if (!connected) {
-        [socket connectToHost:url.host onPort:[url.port intValue] withTimeout:5 error:nil];
+        [socket connectToHost:url.host onPort:[url.port intValue] withTimeout:-1 error:nil];
+//        [socket connectToHost:url.host onPort:[url.port intValue] withTimeout:5 error:nil];
+
         if (runLoopModes) [socket setRunLoopModes:runLoopModes];
         
         // This will be queued up and sent by asyncsocket as soon as the TCP connection is
